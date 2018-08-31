@@ -18,6 +18,7 @@ use std::time::Instant;
 use graph::components::ethereum::*;
 use graph::prelude::*;
 use graph_core::RuntimeManager;
+use graph_core::SubgraphProvider;
 use graph_mock::FakeStore;
 use graph_runtime_wasm::RuntimeHostBuilder;
 
@@ -89,18 +90,17 @@ fn multiple_data_sources_per_subgraph() {
         }
     }
 
-    let resolver = Arc::new(IpfsClient::default());
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
-    let add_resolver = resolver.clone();
     let subgraph_link = runtime
         .block_on(future::lazy(move || {
-            add_subgraph_to_ipfs(add_resolver, "two-datasources")
+            add_subgraph_to_ipfs(Arc::new(IpfsClient::default()), "two-datasources")
         }))
         .unwrap();
 
     runtime
         .block_on(future::lazy(|| {
+            let resolver = Arc::new(IpfsClient::default());
             let logger = Logger::root(slog::Discard, o!());
             let eth_adapter = Arc::new(Mutex::new(MockEthereumAdapter {
                 received_subscriptions: vec![],
@@ -148,3 +148,37 @@ fn multiple_data_sources_per_subgraph() {
         }))
         .unwrap();
 }
+
+
+/// Test that we can add, remove and list subgraphs.
+#[test]
+fn multiple_subgraphs() {
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    let (subgraph1_link, subgraph2_link) = runtime
+        .block_on(future::lazy(|| {
+            let resolver = Arc::new(IpfsClient::default());
+            add_subgraph_to_ipfs(resolver.clone(), "two-datasources").join(
+                add_subgraph_to_ipfs(resolver, "dummy")
+            )
+        })).unwrap();
+
+    runtime
+        .block_on(future::lazy(|| {
+            let logger = Logger::root(slog::Discard, o!());
+            let resolver = Arc::new(IpfsClient::default());
+            let provider = SubgraphProvider::new(logger, resolver);
+            let provider_events = provider.take_event_stream();
+            let schema_events = provider.take_event_stream();
+            provider.deploy("subgraph1".to_owned(), subgraph1_link)
+                .and_then(|_|
+                    provider_events.into_future().map_err(|_| panic!("provider events stream error"))
+                )
+                .and_then(|(item, _)|
+                match item {
+                    SubgraphProviderEvent::SubgraphAdded(_) => () // Ok
+                    _ => panic!("got wrong event")
+                })
+            )
+        })).unwrap();
+}
+
