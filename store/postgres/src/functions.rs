@@ -4,7 +4,7 @@ use diesel::sql_types::*;
 sql_function! {
     revert_block,
     RevertBlock,
-    (block_hash: Text)
+    (block_hash: Text, subgraph: Text)
 }
 
 // Create module for hosting the current setting stored procedure
